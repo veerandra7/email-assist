@@ -10,7 +10,7 @@ from app.services.gmail_service import GmailService
 from app.core.exceptions import EmailProcessingException
 
 
-router = APIRouter(prefix="/auth", tags=["authentication"])
+router = APIRouter(tags=["authentication"])
 
 
 def get_gmail_service() -> GmailService:

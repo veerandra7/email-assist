@@ -132,24 +132,47 @@ export const emailAPI = {
   },
 
   /**
-   * Get emails from a specific domain
+   * Get emails from a specific domain (subjects only for performance)
    */
   getEmailsByDomain: async (domain: string, limit = 20): Promise<EmailContent[]> => {
-    logAPI.info(`📬 Fetching emails from domain: ${domain} (limit: ${limit})`);
+    logAPI.info(`📬 Fetching email subjects from domain: ${domain} (limit: ${limit})`);
     try {
       const response: AxiosResponse<EmailContent[]> = await api.get(
         `/api/emails/domains/${encodeURIComponent(domain)}/emails`,
         { params: { limit } }
       );
-      logAPI.success(`Retrieved ${response.data.length} emails from domain ${domain}`);
-      logAPI.debug('Emails summary:', response.data.map(e => ({ 
+      logAPI.success(`Retrieved ${response.data.length} email subjects from domain ${domain}`);
+      logAPI.debug('Email subjects:', response.data.map(e => ({ 
         subject: e.subject.substring(0, 50) + '...', 
         sender: e.sender,
-        received_date: e.received_date 
+        received_date: e.received_date,
+        message_id: e.message_id 
       })));
       return response.data;
     } catch (error) {
       logAPI.error(`Failed to fetch emails from domain: ${domain}`);
+      throw error;
+    }
+  },
+
+  /**
+   * Get full email content by message ID
+   */
+  getFullEmail: async (messageId: string): Promise<EmailContent> => {
+    logAPI.info(`📧 Loading full email content for message: ${messageId}`);
+    try {
+      const response: AxiosResponse<EmailContent> = await api.get(
+        `/api/emails/message/${encodeURIComponent(messageId)}`
+      );
+      logAPI.success(`Retrieved full email content: ${response.data.subject}`);
+      logAPI.debug('Full email loaded:', {
+        subject: response.data.subject,
+        sender: response.data.sender,
+        bodyLength: response.data.body.length
+      });
+      return response.data;
+    } catch (error) {
+      logAPI.error(`Failed to load full email for message: ${messageId}`);
       throw error;
     }
   },

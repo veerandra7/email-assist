@@ -17,7 +17,7 @@ from app.core.exceptions import (
 )
 
 
-router = APIRouter(prefix="/api/emails", tags=["emails"])
+router = APIRouter(tags=["emails"])
 
 
 def get_email_service() -> EmailService:
@@ -25,14 +25,14 @@ def get_email_service() -> EmailService:
     return EmailService()
 
 
-def get_ai_service() -> AIService:
-    """Dependency injection for AI service."""
-    return AIService()
-
-
 def get_gmail_service() -> GmailService:
     """Dependency injection for Gmail service."""
     return GmailService()
+
+
+def get_ai_service(gmail_service: GmailService = Depends(get_gmail_service)) -> AIService:
+    """Dependency injection for AI service with Gmail service dependency."""
+    return AIService(gmail_service)
 
 
 @router.get("/domains", response_model=List[EmailDomain])
@@ -158,6 +158,29 @@ async def send_email_reply(
             
     except EmailProcessingException as e:
         raise HTTPException(status_code=500, detail=f"Failed to send reply: {str(e)}")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@router.get("/message/{message_id}", response_model=EmailContent)
+async def get_full_email(
+    message_id: str,
+    email_service: EmailService = Depends(get_email_service)
+) -> EmailContent:
+    """
+    Get full email content by message ID.
+    
+    Args:
+        message_id: Gmail message ID
+    
+    Returns:
+        Full email content with body
+    """
+    try:
+        email = email_service.get_email_by_id(message_id)
+        return email
+    except EmailProcessingException as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get email: {str(e)}")
     except Exception as e:
         raise HTTPException(status_code=500, detail="Internal server error")
 

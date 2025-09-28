@@ -1,27 +1,198 @@
 """
 AI service for email summarization and response generation.
 Follows Single Responsibility Principle - handles only AI operations.
-Uses Claude API for all AI operations.
+Uses Claude API for all AI operations with YAML-based prompt management.
 """
 import logging
 import time
-from typing import List
+import yaml
+import os
+from typing import List, Dict, Any
 import anthropic
 
 from app.models.email_models import (
     EmailContent, EmailSummary, ResponseRequest, ResponseGeneration, EmailPriority
 )
-from app.core.config import settings
+from app.core.config import get_settings
 from app.core.exceptions import AIServiceException, APIKeyMissingException
 
 # Configure logger
 logger = logging.getLogger(__name__)
 
+# Get settings instance
+settings = get_settings()
+
+
+class PromptManager:
+    """Manages prompt templates from YAML configuration."""
+    
+    def __init__(self, prompts_file_path: str):
+        """Initialize prompt manager with YAML file."""
+        self.prompts_file_path = prompts_file_path
+        self.prompts_config = self._load_prompts()
+        logger.info("📋 PromptManager initialized with YAML configuration")
+    
+    def _load_prompts(self) -> Dict[str, Any]:
+        """Load prompts from YAML file."""
+        try:
+            with open(self.prompts_file_path, 'r', encoding='utf-8') as file:
+                config = yaml.safe_load(file)
+                logger.info(f"✅ Loaded prompts configuration from {self.prompts_file_path}")
+                return config
+        except FileNotFoundError:
+            logger.error(f"❌ Prompts file not found: {self.prompts_file_path}")
+            raise AIServiceException(f"Prompts file not found: {self.prompts_file_path}")
+        except yaml.YAMLError as e:
+            logger.error(f"❌ Error parsing YAML prompts file: {str(e)}")
+            raise AIServiceException(f"Error parsing YAML prompts file: {str(e)}")
+    
+    def get_prompt(self, prompt_name: str) -> str:
+        """Get a specific prompt template."""
+        try:
+            prompt_config = self.prompts_config['prompts'][prompt_name]
+            template = prompt_config['template']
+            current_version = prompt_config.get('current_version', 'unknown')
+            logger.debug(f"📝 Retrieved prompt '{prompt_name}' (current_version: {current_version})")
+            return template
+        except KeyError as e:
+            logger.error(f"❌ Prompt '{prompt_name}' not found in configuration")
+            raise AIServiceException(f"Prompt '{prompt_name}' not found in configuration")
+    
+    def get_prompt_version(self, prompt_name: str) -> str:
+        """Get the current version of a specific prompt."""
+        try:
+            prompt_config = self.prompts_config['prompts'][prompt_name]
+            current_version = prompt_config.get('current_version', 'unknown')
+            logger.debug(f"📋 Retrieved version for prompt '{prompt_name}': {current_version}")
+            return current_version
+        except KeyError as e:
+            logger.error(f"❌ Prompt '{prompt_name}' not found in configuration")
+            raise AIServiceException(f"Prompt '{prompt_name}' not found in configuration")
+    
+    def get_all_prompt_versions(self) -> Dict[str, str]:
+        """Get all prompt names and their current versions."""
+        versions = {}
+        try:
+            for prompt_name, prompt_config in self.prompts_config['prompts'].items():
+                current_version = prompt_config.get('current_version', 'unknown')
+                versions[prompt_name] = current_version
+            logger.debug(f"📋 Retrieved versions for {len(versions)} prompts")
+            return versions
+        except Exception as e:
+            logger.error(f"❌ Error retrieving prompt versions: {str(e)}")
+            return {}
+    
+    def get_config(self, config_key: str, default=None):
+        """Get configuration value."""
+        return self.prompts_config.get('config', {}).get(config_key, default)
+
+
+class SignatureExtractor:
+    """Extracts sender names from email for signature generation."""
+    
+    def __init__(self, gmail_service=None):
+        """Initialize with Gmail service for user profile access."""
+        self.gmail_service = gmail_service
+    
+    @staticmethod
+    def extract_sender_name(email: EmailContent) -> str:
+        """Extract sender name from email address."""
+        logger.debug(f"🔍 Extracting sender name from: {email.sender}")
+        
+        # Extract name from email address
+        email_address = str(email.sender)
+        
+        # Try to extract name from email format like "John Doe <john@example.com>"
+        if '<' in email_address and '>' in email_address:
+            name_part = email_address.split('<')[0].strip()
+            if name_part:
+                logger.debug(f"📝 Extracted name from email format: {name_part}")
+                return name_part
+        
+        # Extract name from email address (before @)
+        local_part = email_address.split('@')[0]
+        domain_part = email_address.split('@')[1] if '@' in email_address else ''
+        
+        # Handle common business/service email patterns
+        business_patterns = {
+            'hi': 'Team',
+            'hello': 'Team', 
+            'info': 'Team',
+            'support': 'Support Team',
+            'noreply': 'Team',
+            'no-reply': 'Team',
+            'admin': 'Admin Team',
+            'contact': 'Team'
+        }
+        
+        # Check if it's a business email pattern
+        if local_part.lower() in business_patterns:
+            # Extract company name from domain
+            domain_name = domain_part.split('.')[0] if '.' in domain_part else domain_part
+            company_name = domain_name.replace('-', ' ').replace('_', ' ').title()
+            logger.debug(f"📝 Extracted business sender: {company_name} {business_patterns[local_part.lower()]}")
+            return f"{company_name} {business_patterns[local_part.lower()]}"
+        
+        # Convert common email formats to names
+        if '.' in local_part:
+            # john.doe -> John Doe
+            name_parts = local_part.split('.')
+            formatted_name = ' '.join(part.capitalize() for part in name_parts)
+            logger.debug(f"📝 Formatted name from email: {formatted_name}")
+            return formatted_name
+        else:
+            # john -> John
+            formatted_name = local_part.capitalize()
+            logger.debug(f"📝 Formatted name from email: {formatted_name}")
+            return formatted_name
+    
+    def extract_reply_sender_name(self) -> str:
+        """Extract the name of the person sending the reply (current authenticated user)."""
+        try:
+            # Check if Gmail service is available
+            if not self.gmail_service:
+                logger.warning("⚠️ Gmail service not available, using fallback name")
+                return "User"
+            
+            # Get the authenticated user's profile from Gmail
+            if not self.gmail_service.is_authenticated():
+                logger.warning("⚠️ Gmail not authenticated, using fallback name")
+                return "User"
+            
+            profile = self.gmail_service.get_user_profile()
+            user_email = profile.get('email', '')
+            
+            if user_email:
+                logger.debug(f"🔍 Extracting reply sender name from authenticated email: {user_email}")
+                
+                # Use the same extraction logic as for regular emails
+                local_part = user_email.split('@')[0]
+                
+                # Convert common email formats to names
+                if '.' in local_part:
+                    # john.doe -> John Doe
+                    name_parts = local_part.split('.')
+                    formatted_name = ' '.join(part.capitalize() for part in name_parts)
+                    logger.debug(f"📝 Extracted reply sender name: {formatted_name}")
+                    return formatted_name
+                else:
+                    # john -> John
+                    formatted_name = local_part.capitalize()
+                    logger.debug(f"📝 Extracted reply sender name: {formatted_name}")
+                    return formatted_name
+            else:
+                logger.warning("⚠️ Could not get user email from profile, using fallback")
+                return "User"
+                
+        except Exception as e:
+            logger.error(f"❌ Error extracting reply sender name: {e}")
+            return "User"  # Fallback
+
 
 class ClaudeProvider:
-    """Claude API provider implementation."""
+    """Claude API provider implementation with YAML prompt support."""
     
-    def __init__(self, api_key: str):
+    def __init__(self, api_key: str, prompt_manager: PromptManager, gmail_service=None):
         logger.info("🔧 Initializing Claude API provider...")
         if not api_key:
             logger.error("❌ Claude API key is missing")
@@ -29,6 +200,8 @@ class ClaudeProvider:
         
         try:
             self.client = anthropic.Anthropic(api_key=api_key)
+            self.prompt_manager = prompt_manager
+            self.signature_extractor = SignatureExtractor(gmail_service) if gmail_service else SignatureExtractor(None)
             logger.info("✅ Claude API client initialized successfully")
         except Exception as e:
             logger.error(f"❌ Failed to initialize Claude client: {str(e)}")
@@ -42,12 +215,16 @@ class ClaudeProvider:
         
         try:
             prompt = self._create_summary_prompt(email)
-            logger.debug(f"🤖 Generated prompt for summarization (length: {len(prompt)} chars)")
+            prompt_version = self.prompt_manager.get_prompt_version('summarization')
+            logger.debug(f"🤖 Generated prompt for summarization (version: {prompt_version}, length: {len(prompt)} chars)")
+            
+            max_tokens = self.prompt_manager.get_config('max_tokens_summarization', 500)
+            model = self.prompt_manager.get_config('model', 'claude-3-haiku-20240307')
             
             logger.info("🔄 Sending request to Claude API for summarization...")
             response = self.client.messages.create(
-                model="claude-3-haiku-20240307",
-                max_tokens=500,
+                model=model,
+                max_tokens=max_tokens,
                 messages=[
                     {"role": "user", "content": prompt}
                 ]
@@ -76,12 +253,17 @@ class ClaudeProvider:
         
         try:
             prompt = self._create_response_prompt(request)
-            logger.debug(f"🤖 Generated prompt for response (length: {len(prompt)} chars)")
+            prompt_name = self._get_response_prompt_name(request.tone)
+            prompt_version = self.prompt_manager.get_prompt_version(prompt_name)
+            logger.debug(f"🤖 Generated prompt for response (version: {prompt_version}, length: {len(prompt)} chars)")
+            
+            max_tokens = self.prompt_manager.get_config('max_tokens_response', 300)
+            model = self.prompt_manager.get_config('model', 'claude-3-haiku-20240307')
             
             logger.info("🔄 Sending request to Claude API for response generation...")
             response = self.client.messages.create(
-                model="claude-3-haiku-20240307",
-                max_tokens=300,
+                model=model,
+                max_tokens=max_tokens,
                 messages=[
                     {"role": "user", "content": prompt}
                 ]
@@ -107,42 +289,52 @@ class ClaudeProvider:
             logger.error(f"❌ Claude response generation failed: {str(e)}", exc_info=True)
             raise AIServiceException(f"Claude response generation failed: {str(e)}")
     
+    def _get_response_prompt_name(self, tone: str) -> str:
+        """Get the appropriate prompt name based on tone."""
+        if tone and tone.lower() == 'formal':
+            return 'response_generation_formal'
+        elif tone and tone.lower() == 'friendly':
+            return 'response_generation_friendly'
+        else:
+            return 'response_generation'
+    
     def _create_summary_prompt(self, email: EmailContent) -> str:
-        """Create prompt for email summarization."""
-        logger.debug("📝 Creating summarization prompt...")
-        return f"""
-Analyze this email and provide a structured summary:
-
-Subject: {email.subject}
-From: {email.sender}
-Date: {email.received_date}
-Content: {email.body}
-
-Please provide:
-1. A concise 2-3 sentence summary
-2. Key points (bullet format)
-3. Whether action is required (Yes/No)
-4. Urgency level (low/medium/high/urgent)
-5. Suggested response tone (professional/friendly/urgent/formal)
-
-Format your response clearly with labels.
-"""
+        """Create prompt for email summarization using YAML template."""
+        logger.debug("📝 Creating summarization prompt from YAML template...")
+        template = self.prompt_manager.get_prompt('summarization')
+        
+        return template.format(
+            subject=email.subject,
+            sender=email.sender,
+            received_date=email.received_date,
+            body=email.body
+        )
     
     def _create_response_prompt(self, request: ResponseRequest) -> str:
-        """Create prompt for response generation."""
-        logger.debug("📝 Creating response generation prompt...")
-        return f"""
-Create an email response with the following context:
-
-Original Email Subject: {request.original_email.subject}
-From: {request.original_email.sender}
-Original Content: {request.original_email.body}
-
-User Instructions: {request.user_input}
-Required Tone: {request.tone}
-
-Generate a well-structured email response that addresses the user's instructions while maintaining the specified tone. Keep it professional and concise.
-"""
+        """Create prompt for response generation using YAML template."""
+        logger.debug("📝 Creating response generation prompt from YAML template...")
+        
+        # Extract original sender name (from the email we're replying to)
+        original_sender_name = self.signature_extractor.extract_sender_name(request.original_email)
+        logger.debug(f"👤 Using original sender name: {original_sender_name}")
+        
+        # Extract reply sender name (the person sending the reply)
+        reply_sender_name = self.signature_extractor.extract_reply_sender_name()
+        logger.debug(f"✍️ Using reply sender name: {reply_sender_name}")
+        
+        # Choose appropriate prompt based on tone
+        prompt_name = self._get_response_prompt_name(request.tone)
+        template = self.prompt_manager.get_prompt(prompt_name)
+        
+        return template.format(
+            subject=request.original_email.subject,
+            sender=request.original_email.sender,
+            body=request.original_email.body,
+            user_input=request.user_input,
+            tone=request.tone or 'professional',
+            original_sender_name=original_sender_name,
+            reply_sender_name=reply_sender_name
+        )
     
     def _parse_summary_response(self, content: str, email: EmailContent) -> EmailSummary:
         """Parse Claude response into EmailSummary object."""
@@ -230,11 +422,11 @@ Generate a well-structured email response that addresses the user's instructions
 class AIService:
     """
     Main AI service using Claude for all operations.
-    Follows Single Responsibility Principle.
+    Follows Single Responsibility Principle with YAML prompt management.
     """
     
-    def __init__(self):
-        """Initialize AI service with Claude provider."""
+    def __init__(self, gmail_service=None):
+        """Initialize AI service with Claude provider and prompt manager."""
         logger.info("🤖 Initializing AI Service...")
         
         if not settings.claude_api_key or settings.claude_api_key == "your_claude_api_key_here":
@@ -242,8 +434,16 @@ class AIService:
             raise APIKeyMissingException("Claude API key not configured. Please set CLAUDE_API_KEY in your .env file")
         
         try:
-            self.provider = ClaudeProvider(settings.claude_api_key)
-            logger.info("✅ AI Service initialized successfully with Claude provider")
+            # Store Gmail service for signature extraction
+            self.gmail_service = gmail_service
+            
+            # Initialize prompt manager
+            prompts_file_path = os.path.join(os.path.dirname(__file__), 'prompts.yaml')
+            prompt_manager = PromptManager(prompts_file_path)
+            
+            # Initialize Claude provider with Gmail service for signature extraction
+            self.provider = ClaudeProvider(settings.claude_api_key, prompt_manager, gmail_service)
+            logger.info("✅ AI Service initialized successfully with Claude provider and YAML prompts")
         except Exception as e:
             logger.error(f"❌ Failed to initialize AI service: {str(e)}")
             raise
@@ -273,4 +473,12 @@ class AIService:
     def get_provider_name(self) -> str:
         """Get the name of the current AI provider."""
         logger.debug("📋 Returning AI provider name: claude")
-        return "claude" 
+        return "claude"
+    
+    def get_prompt_versions(self) -> Dict[str, str]:
+        """Get all prompt versions for monitoring and debugging."""
+        return self.provider.prompt_manager.get_all_prompt_versions()
+    
+    def get_prompt_version(self, prompt_name: str) -> str:
+        """Get the current version of a specific prompt."""
+        return self.provider.prompt_manager.get_prompt_version(prompt_name)

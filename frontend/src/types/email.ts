@@ -25,6 +25,7 @@ export interface EmailContent {
   received_date: string;
   priority: EmailPriority;
   domain: string;
+  message_id?: string;  // Gmail message ID for on-demand loading
 }
 
 export interface EmailSummary {

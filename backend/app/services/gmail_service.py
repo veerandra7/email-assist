@@ -5,7 +5,8 @@ Follows Single Responsibility Principle - handles only Gmail operations.
 import os
 import json
 import base64
-from datetime import datetime, timedelta
+import logging
+from datetime import datetime, timedelta, timezone
 from typing import List, Dict, Any, Optional
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
@@ -17,25 +18,32 @@ from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 
 from app.models.email_models import EmailContent, EmailDomain, DomainAnalysis, EmailPriority
-from app.core.config import settings
+from app.core.config import get_settings
 from app.core.exceptions import EmailProcessingException, InvalidEmailDomainException
+
+logger = logging.getLogger(__name__)
 
 
 class GmailService:
-    """Gmail service for authentication and email operations."""
+    """
+    Gmail service for OAuth2 authentication and email operations.
+    """
     
     def __init__(self):
         """Initialize Gmail service."""
         self.credentials_file = "gmail_credentials.json"
         self.token_file = "gmail_token.json"
         self.service = None
+        self.settings = get_settings()
+        
+        # Load existing credentials if available
         self._load_existing_credentials()
     
     def _load_existing_credentials(self):
         """Load existing credentials if available."""
         if os.path.exists(self.token_file):
             try:
-                creds = Credentials.from_authorized_user_file(self.token_file, settings.gmail_scopes)
+                creds = Credentials.from_authorized_user_file(self.token_file, self.settings.gmail_scopes)
                 if creds and creds.valid:
                     self.service = build('gmail', 'v1', credentials=creds)
                 elif creds and creds.expired and creds.refresh_token:
@@ -52,9 +60,32 @@ class GmailService:
                 if os.path.exists(self.token_file):
                     os.remove(self.token_file)
     
+    def _create_credentials_file(self):
+        """Create Gmail OAuth2 credentials file."""
+        if not self.settings.gmail_client_id or not self.settings.gmail_client_secret:
+            raise EmailProcessingException("Gmail OAuth2 credentials not configured")
+        
+        credentials = {
+            "web": {
+                "client_id": self.settings.gmail_client_id,
+                "client_secret": self.settings.gmail_client_secret,
+                "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+                "token_uri": "https://oauth2.googleapis.com/token",
+                "redirect_uris": [self.settings.gmail_redirect_uri]
+            }
+        }
+        
+        with open(self.credentials_file, 'w') as f:
+            json.dump(credentials, f, indent=2)
+    
+    def _save_credentials(self, creds: Credentials):
+        """Save credentials to file."""
+        with open(self.token_file, 'w') as f:
+            f.write(creds.to_json())
+    
     def get_auth_url(self) -> str:
         """Get Gmail OAuth2 authorization URL."""
-        if not settings.gmail_client_id or not settings.gmail_client_secret:
+        if not self.settings.gmail_client_id or not self.settings.gmail_client_secret:
             raise EmailProcessingException("Gmail OAuth2 credentials not configured")
         
         # Create credentials file if not exists
@@ -63,15 +94,15 @@ class GmailService:
         
         flow = Flow.from_client_secrets_file(
             self.credentials_file,
-            scopes=settings.gmail_scopes,
-            redirect_uri=settings.gmail_redirect_uri
+            scopes=self.settings.gmail_scopes,
+            redirect_uri=self.settings.gmail_redirect_uri
         )
         
         auth_url, _ = flow.authorization_url(
             access_type='offline',
             include_granted_scopes='true',
             prompt='consent',  # Force consent screen to get refresh token
-                            login_hint=None
+            login_hint=None
         )
         
         return auth_url
@@ -84,8 +115,8 @@ class GmailService:
             
             flow = Flow.from_client_secrets_file(
                 self.credentials_file,
-                scopes=settings.gmail_scopes,
-                redirect_uri=settings.gmail_redirect_uri
+                scopes=self.settings.gmail_scopes,
+                redirect_uri=self.settings.gmail_redirect_uri
             )
             
             flow.fetch_token(code=auth_code)
@@ -122,82 +153,156 @@ class GmailService:
             raise EmailProcessingException(f"Failed to get user profile: {str(e)}")
     
     def get_emails(self, max_results: int = 100) -> List[EmailContent]:
-        """Fetch emails from Gmail."""
+        """Fetch emails from Gmail with performance optimizations."""
         if not self.is_authenticated():
             raise EmailProcessingException("Not authenticated with Gmail")
         
         try:
+            # Limit max results for performance (Gmail API is slow with large requests)
+            safe_max_results = min(max_results, 50)
+            
             # Get list of messages
             results = self.service.users().messages().list(
                 userId='me',
-                maxResults=max_results,
-                q='in:inbox'  # Only inbox emails
+                maxResults=safe_max_results
             ).execute()
             
             messages = results.get('messages', [])
             emails = []
             
-            for msg in messages:
-                email_data = self._get_email_details(msg['id'])
-                if email_data:
-                    emails.append(email_data)
+            # Process only limited messages for better performance
+            for message in messages[:safe_max_results]:
+                try:
+                    # Get message with minimal format for faster processing
+                    msg = self.service.users().messages().get(
+                        userId='me',
+                        id=message['id'],
+                        format='full'  # We need full format for body extraction
+                    ).execute()
+                    
+                    # Extract email data
+                    headers = msg['payload'].get('headers', [])
+                    email_data = {}
+                    
+                    for header in headers:
+                        name = header['name'].lower()
+                        if name in ['subject', 'from', 'to', 'date']:
+                            email_data[name] = header['value']
+                    
+                    # Extract body
+                    body = self._extract_body(msg['payload'])
+                    
+                    if email_data.get('from') and email_data.get('subject'):
+                        # Parse date
+                        date_str = email_data.get('date', '')
+                        try:
+                            from email.utils import parsedate_to_datetime
+                            received_date = parsedate_to_datetime(date_str)
+                            # Ensure timezone awareness
+                            if received_date.tzinfo is None:
+                                received_date = received_date.replace(tzinfo=timezone.utc)
+                        except:
+                            received_date = datetime.now(timezone.utc)
+                        
+                        # Extract domain from sender
+                        sender_email = email_data['from']
+                        domain = sender_email.split('@')[-1] if '@' in sender_email else 'unknown'
+                        
+                        email_content = EmailContent(
+                            subject=email_data['subject'],
+                            body=body,
+                            sender=email_data['from'],
+                            recipient=email_data.get('to', ''),
+                            received_date=received_date,
+                            domain=domain,
+                            message_id=message['id']
+                        )
+                        
+                        emails.append(email_content)
+                        
+                except Exception as e:
+                    print(f"Error processing message {message['id']}: {e}")
+                    continue
             
             return emails
             
         except HttpError as e:
             raise EmailProcessingException(f"Failed to fetch emails: {str(e)}")
     
-    def get_emails_by_domain(self, domain: str, limit: int = 20) -> List[EmailContent]:
-        """Get emails from a specific domain."""
+    def _extract_body(self, payload: Dict[str, Any]) -> str:
+        """Extract email body from payload."""
+        body = ""
+        
+        if 'parts' in payload:
+            for part in payload['parts']:
+                if part['mimeType'] == 'text/plain':
+                    data = part['body'].get('data', '')
+                    if data:
+                        body += base64.urlsafe_b64decode(data).decode('utf-8')
+                elif part['mimeType'] == 'text/html' and not body:
+                    data = part['body'].get('data', '')
+                    if data:
+                        body += base64.urlsafe_b64decode(data).decode('utf-8')
+        else:
+            if payload['mimeType'] == 'text/plain':
+                data = payload['body'].get('data', '')
+                if data:
+                    body = base64.urlsafe_b64decode(data).decode('utf-8')
+            elif payload['mimeType'] == 'text/html':
+                data = payload['body'].get('data', '')
+                if data:
+                    body = base64.urlsafe_b64decode(data).decode('utf-8')
+        
+        return body.strip()
+    
+    def send_email(self, to: str, subject: str, body: str) -> bool:
+        """Send email via Gmail."""
         if not self.is_authenticated():
             raise EmailProcessingException("Not authenticated with Gmail")
         
         try:
-            # Search for emails from specific domain
-            query = f'from:{domain} in:inbox'
-            results = self.service.users().messages().list(
+            message = MIMEText(body)
+            message['to'] = to
+            message['subject'] = subject
+            
+            raw_message = base64.urlsafe_b64encode(message.as_bytes()).decode('utf-8')
+            
+            self.service.users().messages().send(
                 userId='me',
-                maxResults=limit,
-                q=query
+                body={'raw': raw_message}
             ).execute()
             
-            messages = results.get('messages', [])
-            emails = []
-            
-            for msg in messages:
-                email_data = self._get_email_details_full(msg['id'])
-                if email_data:
-                    emails.append(email_data)
-            
-            return emails
+            return True
             
         except HttpError as e:
-            raise EmailProcessingException(f"Failed to fetch emails from {domain}: {str(e)}")
-    
-    def get_all_domains(self) -> List[EmailDomain]:
-        """Get all email domains with their statistics."""
-        emails = self.get_emails(50)  # Reduced from 500 to 50 for better performance
-        return self._analyze_domains(emails)
+            raise EmailProcessingException(f"Failed to send email: {str(e)}")
     
     def send_reply(self, original_email: EmailContent, reply_body: str) -> bool:
-        """Send a reply to an email."""
+        """Send a reply to an email via Gmail."""
         if not self.is_authenticated():
             raise EmailProcessingException("Not authenticated with Gmail")
         
         try:
             # Create reply message
-            message = MIMEMultipart()
+            message = MIMEText(reply_body)
             message['to'] = original_email.sender
-            message['subject'] = f"Re: {original_email.subject}"
             
-            # Add reply body
-            message.attach(MIMEText(reply_body, 'plain'))
+            # Create reply subject (add "Re: " if not already present)
+            original_subject = original_email.subject
+            if not original_subject.lower().startswith('re:'):
+                reply_subject = f"Re: {original_subject}"
+            else:
+                reply_subject = original_subject
             
-            # Encode message
-            raw_message = base64.urlsafe_b64encode(message.as_bytes()).decode()
+            message['subject'] = reply_subject
             
-            # Send message
-            send_result = self.service.users().messages().send(
+            # Set In-Reply-To and References headers for proper threading
+            # Note: In a full implementation, we'd need the original message ID
+            # For now, we'll send as a regular email to the sender
+            
+            raw_message = base64.urlsafe_b64encode(message.as_bytes()).decode('utf-8')
+            
+            self.service.users().messages().send(
                 userId='me',
                 body={'raw': raw_message}
             ).execute()
@@ -207,239 +312,290 @@ class GmailService:
         except HttpError as e:
             raise EmailProcessingException(f"Failed to send reply: {str(e)}")
     
-    def _get_email_details(self, message_id: str) -> Optional[EmailContent]:
-        """Get detailed information for a specific email."""
+    def get_domains(self, emails: List[EmailContent]) -> List[EmailDomain]:
+        """Analyze email domains and return domain statistics."""
+        domain_stats = {}
+        
+        def normalize_datetime(dt):
+            """Ensure datetime is timezone-aware."""
+            if dt.tzinfo is None:
+                # If naive, assume UTC
+                return dt.replace(tzinfo=timezone.utc)
+            return dt
+        
+        for email in emails:
+            domain = email.domain
+            normalized_date = normalize_datetime(email.received_date)
+            
+            if domain not in domain_stats:
+                domain_stats[domain] = {
+                    'count': 0,
+                    'last_received': normalized_date,
+                    'importance_score': 0.5  # Default importance
+                }
+            
+            domain_stats[domain]['count'] += 1
+            if normalized_date > domain_stats[domain]['last_received']:
+                domain_stats[domain]['last_received'] = normalized_date
+        
+        # Calculate importance scores based on frequency and recency
+        total_emails = len(emails)
+        current_time = datetime.now(timezone.utc)
+        
+        for domain, stats in domain_stats.items():
+            frequency_score = stats['count'] / total_emails
+            recency_score = 1.0 if stats['last_received'] > current_time - timedelta(days=7) else 0.5
+            stats['importance_score'] = (frequency_score * 0.7) + (recency_score * 0.3)
+        
+        return [
+            EmailDomain(
+                domain=domain,
+                count=stats['count'],
+                importance_score=stats['importance_score'],
+                last_received=stats['last_received']
+            )
+            for domain, stats in domain_stats.items()
+        ]
+    
+    def get_emails_by_domain(self, domain: str, limit: int = 20) -> List[EmailContent]:
+        """Get emails from a specific domain using Gmail search."""
+        if not self.is_authenticated():
+            raise EmailProcessingException("Gmail authentication required. Please authenticate first.")
+        
         try:
-            # Use 'metadata' format for faster processing when we only need headers
-            message = self.service.users().messages().get(
+            # Use Gmail search query to filter by domain - much faster!
+            search_query = f"from:{domain}"
+            
+            # Get list of messages matching domain
+            results = self.service.users().messages().list(
                 userId='me',
-                id=message_id,
-                format='metadata',
-                metadataHeaders=['Subject', 'From', 'To', 'Date']
+                q=search_query,
+                maxResults=min(limit, 50)  # Limit to prevent slowness
             ).execute()
             
-            headers = {h['name']: h['value'] for h in message['payload'].get('headers', [])}
+            messages = results.get('messages', [])
+            emails = []
             
-            # Parse date
-            date_str = headers.get('Date', '')
-            received_date = self._parse_date(date_str)
+            # Process only the first few messages for speed
+            for message in messages[:limit]:
+                try:
+                    # Get minimal message details for faster processing
+                    msg = self.service.users().messages().get(
+                        userId='me',
+                        id=message['id'],
+                        format='metadata',  # Only get headers, not full body for speed
+                        metadataHeaders=['subject', 'from', 'to', 'date']
+                    ).execute()
+                    
+                    # Extract email data from metadata
+                    headers = msg['payload'].get('headers', [])
+                    email_data = {}
+                    
+                    for header in headers:
+                        name = header['name'].lower()
+                        if name in ['subject', 'from', 'to', 'date']:
+                            email_data[name] = header['value']
+                    
+                    if email_data.get('from') and email_data.get('subject'):
+                        # Parse date
+                        date_str = email_data.get('date', '')
+                        try:
+                            from email.utils import parsedate_to_datetime
+                            received_date = parsedate_to_datetime(date_str)
+                            # Ensure timezone awareness
+                            if received_date.tzinfo is None:
+                                received_date = received_date.replace(tzinfo=timezone.utc)
+                        except:
+                            received_date = datetime.now(timezone.utc)
+                        
+                        # Extract domain from sender
+                        sender_email = email_data['from']
+                        email_domain = sender_email.split('@')[-1] if '@' in sender_email else 'unknown'
+                        if '<' in sender_email and '>' in sender_email:
+                            email_address_part = sender_email.split('<')[1].split('>')[0]
+                            email_domain = email_address_part.split('@')[-1] if '@' in email_address_part else 'unknown'
+                        
+                        email_content = EmailContent(
+                            subject=email_data['subject'],
+                            body="",  # Empty body for list view - will be loaded on demand
+                            sender=email_data['from'],
+                            recipient=email_data.get('to', ''),
+                            received_date=received_date,
+                            domain=email_domain,
+                            message_id=message['id']  # Store Gmail message ID for on-demand loading
+                        )
+                        
+                        emails.append(email_content)
+                        
+                except Exception as e:
+                    print(f"Error processing message {message['id']}: {e}")
+                    continue
             
-            # Extract domain from sender
-            sender = headers.get('From', '')
-            domain = self._extract_domain(sender)
-            
-            # Use simplified priority determination without body
-            priority = self._determine_priority_simple(headers)
-            
-            return EmailContent(
-                subject=headers.get('Subject', 'No Subject'),
-                body="",  # Don't fetch body for domain analysis to improve performance
-                sender=sender,
-                recipient=headers.get('To', ''),
-                received_date=received_date,
-                priority=priority,
-                domain=domain
-            )
+            return emails
             
         except Exception as e:
-            print(f"Error processing email {message_id}: {e}")
-            return None
+            raise EmailProcessingException(f"Failed to get emails for domain {domain}: {str(e)}")
     
-    def _get_email_details_full(self, message_id: str) -> Optional[EmailContent]:
-        """Get full detailed information for a specific email including body."""
+    def get_email_by_id(self, message_id: str) -> EmailContent:
+        """Get a single email by message ID with full body content."""
+        if not self.is_authenticated():
+            raise EmailProcessingException("Gmail authentication required. Please authenticate first.")
+        
         try:
-            message = self.service.users().messages().get(
+            # Get full message details
+            msg = self.service.users().messages().get(
                 userId='me',
                 id=message_id,
                 format='full'
             ).execute()
             
-            headers = {h['name']: h['value'] for h in message['payload'].get('headers', [])}
+            # Extract email data
+            headers = msg['payload'].get('headers', [])
+            email_data = {}
             
-            # Extract email body
-            body = self._extract_body(message['payload'])
+            for header in headers:
+                name = header['name'].lower()
+                if name in ['subject', 'from', 'to', 'date']:
+                    email_data[name] = header['value']
             
-            # Parse date
-            date_str = headers.get('Date', '')
-            received_date = self._parse_date(date_str)
+            # Extract full body
+            body = self._extract_body(msg['payload'])
             
-            # Extract domain from sender
-            sender = headers.get('From', '')
-            domain = self._extract_domain(sender)
+            if email_data.get('from') and email_data.get('subject'):
+                # Parse date
+                date_str = email_data.get('date', '')
+                try:
+                    from email.utils import parsedate_to_datetime
+                    received_date = parsedate_to_datetime(date_str)
+                    if received_date.tzinfo is None:
+                        received_date = received_date.replace(tzinfo=timezone.utc)
+                except:
+                    received_date = datetime.now(timezone.utc)
+                
+                # Extract domain from sender
+                sender_email = email_data['from']
+                domain = sender_email.split('@')[-1] if '@' in sender_email else 'unknown'
+                if '<' in sender_email and '>' in sender_email:
+                    email_address_part = sender_email.split('<')[1].split('>')[0]
+                    domain = email_address_part.split('@')[-1] if '@' in email_address_part else 'unknown'
+                
+                return EmailContent(
+                    subject=email_data['subject'],
+                    body=body,
+                    sender=email_data['from'],
+                    recipient=email_data.get('to', ''),
+                    received_date=received_date,
+                    domain=domain,
+                    message_id=message_id
+                )
             
-            # Determine priority with full body analysis
-            priority = self._determine_priority(headers, body)
-            
-            return EmailContent(
-                subject=headers.get('Subject', 'No Subject'),
-                body=body[:settings.max_email_length],  # Limit body length
-                sender=sender,
-                recipient=headers.get('To', ''),
-                received_date=received_date,
-                priority=priority,
-                domain=domain
-            )
+            raise EmailProcessingException("Email missing required fields")
             
         except Exception as e:
-            print(f"Error processing email {message_id}: {e}")
-            return None
+            raise EmailProcessingException(f"Failed to get email {message_id}: {str(e)}")
     
-    def _extract_body(self, payload: Dict) -> str:
-        """Extract email body from payload."""
-        body = ""
+    def get_all_domains(self) -> List[EmailDomain]:
+        """Get email domains using representative sampling for accurate counts."""
+        if not self.is_authenticated():
+            raise EmailProcessingException("Gmail authentication required. Please authenticate first.")
         
-        if 'parts' in payload:
-            for part in payload['parts']:
-                if part['mimeType'] == 'text/plain':
-                    data = part['body'].get('data', '')
-                    if data:
-                        body = base64.urlsafe_b64decode(data).decode('utf-8', errors='ignore')
-                        break
-        elif payload['mimeType'] == 'text/plain':
-            data = payload['body'].get('data', '')
-            if data:
-                body = base64.urlsafe_b64decode(data).decode('utf-8', errors='ignore')
-        
-        return body
-    
-    def _parse_date(self, date_str: str) -> datetime:
-        """Parse email date string."""
         try:
-            # Gmail date format: "Wed, 21 Sep 2025 10:30:00 +0000"
-            from email.utils import parsedate_to_datetime
-            import pytz
-            parsed_date = parsedate_to_datetime(date_str)
-            # Ensure timezone awareness
-            if parsed_date.tzinfo is None:
-                parsed_date = pytz.UTC.localize(parsed_date)
-            return parsed_date
-        except:
-            import pytz
-            return datetime.now(pytz.UTC)
+            logger.info("📊 Getting domains using representative sampling...")
+            
+            # Get a balanced sample for domain representation 
+            # 100 emails should give us good domain coverage without being too slow
+            sample_emails = self.get_emails(max_results=100)
+            
+            # Group emails by domain and count them
+            domain_stats = {}
+            for email in sample_emails:
+                domain = email.domain
+                if domain not in domain_stats:
+                    domain_stats[domain] = {
+                        'count': 0,
+                        'last_received': email.received_date,
+                        'emails': []
+                    }
+                
+                domain_stats[domain]['count'] += 1
+                domain_stats[domain]['emails'].append(email)
+                
+                # Update last received date
+                if email.received_date > domain_stats[domain]['last_received']:
+                    domain_stats[domain]['last_received'] = email.received_date
+            
+            logger.info(f"📊 Found {len(domain_stats)} domains from sample of {len(sample_emails)} emails")
+            
+            domains_with_counts = []
+            total_sample = len(sample_emails)
+            
+            # Process each domain
+            for domain, stats in domain_stats.items():
+                try:
+                    actual_count = stats['count']  # Use sample count (more reliable)
+                    last_received = stats['last_received']
+                    
+                    # Calculate importance score based on frequency and recency
+                    frequency_score = stats['count'] / total_sample
+                    
+                    current_time = datetime.now(timezone.utc)
+                    days_ago = (current_time - last_received).days
+                    
+                    # Recency scoring: recent = high score
+                    if days_ago <= 1:
+                        recency_score = 1.0
+                    elif days_ago <= 7:
+                        recency_score = 0.8
+                    elif days_ago <= 30:
+                        recency_score = 0.5
+                    else:
+                        recency_score = 0.2
+                    
+                    importance_score = (frequency_score * 0.6) + (recency_score * 0.4)
+                    
+                    domains_with_counts.append(EmailDomain(
+                        domain=domain,
+                        count=actual_count,
+                        importance_score=min(importance_score, 1.0),  # Cap at 1.0
+                        last_received=last_received
+                    ))
+                    
+                    logger.debug(f"📊 Domain {domain}: {actual_count} emails, score={importance_score:.3f}")
+                    
+                except Exception as e:
+                    logger.warning(f"Error processing domain {domain}: {e}")
+                    # Use basic data as fallback
+                    domains_with_counts.append(EmailDomain(
+                        domain=domain,
+                        count=stats['count'],
+                        importance_score=0.3,
+                        last_received=stats['last_received']
+                    ))
+            
+            # Sort by importance score, then by count (most important first)
+            domains_with_counts.sort(key=lambda d: (d.importance_score, d.count), reverse=True)
+            
+            logger.info(f"✅ Returning {len(domains_with_counts)} domains with sample-based counts")
+            return domains_with_counts
+            
+        except Exception as e:
+            logger.error(f"❌ Failed to get domains: {str(e)}")
+            raise EmailProcessingException(f"Failed to get email domains: {str(e)}")
     
-    def _extract_domain(self, email: str) -> str:
-        """Extract domain from email address."""
+    def logout(self):
+        """Logout and clear all stored credentials."""
+        self._clear_sessions()
+        self.service = None
+        print("✅ Gmail service logged out and sessions cleared")
+    
+    def _clear_sessions(self):
+        """Clear all stored credentials and sessions."""
         try:
-            from email.utils import parseaddr
-            _, email_addr = parseaddr(email)
-            if '@' in email_addr:
-                return email_addr.split('@')[1].lower()
-            return 'unknown'
-        except:
-            return 'unknown'
-    
-    def _determine_priority(self, headers: Dict, body: str) -> EmailPriority:
-        """Determine email priority based on headers and content."""
-        # Check for explicit priority headers
-        priority_header = headers.get('X-Priority', '').lower()
-        importance = headers.get('Importance', '').lower()
-        
-        if priority_header in ['1', '2'] or importance == 'high':
-            return EmailPriority.HIGH
-        elif 'urgent' in headers.get('Subject', '').lower():
-            return EmailPriority.URGENT
-        elif any(word in body.lower() for word in ['urgent', 'asap', 'immediately', 'critical']):
-            return EmailPriority.HIGH
-        elif any(word in body.lower() for word in ['newsletter', 'unsubscribe', 'promotion']):
-            return EmailPriority.LOW
-        else:
-            return EmailPriority.MEDIUM
-    
-    def _determine_priority_simple(self, headers: Dict) -> EmailPriority:
-        """Determine email priority based on headers only (faster)."""
-        # Check for explicit priority headers
-        priority_header = headers.get('X-Priority', '').lower()
-        importance = headers.get('Importance', '').lower()
-        
-        if priority_header in ['1', '2'] or importance == 'high':
-            return EmailPriority.HIGH
-        elif 'urgent' in headers.get('Subject', '').lower():
-            return EmailPriority.URGENT
-        elif any(word in headers.get('Subject', '').lower() for word in ['newsletter', 'unsubscribe', 'promotion']):
-            return EmailPriority.LOW
-        else:
-            return EmailPriority.MEDIUM
-    
-    def _analyze_domains(self, emails: List[EmailContent]) -> List[EmailDomain]:
-        """Analyze email domains and calculate importance scores."""
-        domain_stats: Dict[str, Dict[str, Any]] = {}
-        
-        for email in emails:
-            domain = email.domain
-            
-            if domain not in domain_stats:
-                domain_stats[domain] = {
-                    'count': 0,
-                    'last_received': email.received_date,
-                    'priority_sum': 0
-                }
-            
-            domain_stats[domain]['count'] += 1
-            domain_stats[domain]['priority_sum'] += self._get_priority_weight(email.priority)
-            
-            if email.received_date > domain_stats[domain]['last_received']:
-                domain_stats[domain]['last_received'] = email.received_date
-        
-        # Calculate importance scores
-        total_emails = len(emails)
-        domains = []
-        
-        for domain, stats in domain_stats.items():
-            # Importance based on frequency, recency, and priority
-            frequency_score = stats['count'] / total_emails if total_emails > 0 else 0
-            avg_priority = stats['priority_sum'] / stats['count'] if stats['count'] > 0 else 0
-            
-            # Recency score (higher for more recent emails)
-            import pytz
-            now = datetime.now(pytz.UTC)
-            last_received = stats['last_received']
-            if last_received.tzinfo is None:
-                last_received = pytz.UTC.localize(last_received)
-            days_since_last = (now - last_received).days
-            recency_score = max(0, 1 - (days_since_last / 30))  # Decay over 30 days
-            
-            importance_score = min(1.0, (frequency_score * 0.4 + 
-                                        avg_priority * 0.4 + 
-                                        recency_score * 0.2))
-            
-            domains.append(EmailDomain(
-                domain=domain,
-                count=stats['count'],
-                importance_score=round(importance_score, 3),
-                last_received=stats['last_received']
-            ))
-        
-        # Sort by importance score descending
-        domains.sort(key=lambda x: x.importance_score, reverse=True)
-        return domains
-    
-    def _get_priority_weight(self, priority: EmailPriority) -> float:
-        """Convert priority enum to numeric weight."""
-        weights = {
-            EmailPriority.LOW: 0.25,
-            EmailPriority.MEDIUM: 0.5,
-            EmailPriority.HIGH: 0.75,
-            EmailPriority.URGENT: 1.0
-        }
-        return weights.get(priority, 0.5)
-    
-    def _create_credentials_file(self):
-        """Create credentials file from environment variables."""
-        credentials = {
-            "web": {
-                "client_id": settings.gmail_client_id,
-                "client_secret": settings.gmail_client_secret,
-                "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-                "token_uri": "https://oauth2.googleapis.com/token",
-                "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
-                "redirect_uris": [settings.gmail_redirect_uri]
-            }
-        }
-        
-        with open(self.credentials_file, 'w') as f:
-            json.dump(credentials, f)
-    
-    def _save_credentials(self, creds: Credentials):
-        """Save credentials to file."""
-        with open(self.token_file, 'w') as token:
-            token.write(creds.to_json()) 
+            files_to_remove = [self.credentials_file, self.token_file]
+            for file_path in files_to_remove:
+                if os.path.exists(file_path):
+                    os.remove(file_path)
+                    print(f"🗑️ Cleared session file: {file_path}")
+            print("✅ All Gmail sessions cleared - fresh authentication required")
+        except Exception as e:
+            print(f"⚠️ Warning: Could not clear some session files: {e}")
