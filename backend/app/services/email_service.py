@@ -4,7 +4,7 @@ Follows Single Responsibility Principle - handles only email operations.
 """
 import logging
 from datetime import datetime, timedelta
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 import re
 from email.utils import parseaddr
 
@@ -26,11 +26,11 @@ class EmailService:
     Follows Interface Segregation Principle - focused interface.
     """
     
-    def __init__(self):
+    def __init__(self, session_id: Optional[str] = None):
         """Initialize email service with Gmail integration."""
         logger.info("📧 Initializing Email Service...")
         try:
-            self.gmail_service = GmailService()
+            self.gmail_service = GmailService(session_id=session_id)
             logger.info("✅ Email Service initialized successfully with Gmail integration")
         except Exception as e:
             logger.error(f"❌ Failed to initialize Email Service: {str(e)}")

@@ -5,13 +5,14 @@ Follows Single Responsibility Principle - handles only application setup.
 import logging
 import os
 import sys
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 import time
 
 from app.core.config import get_settings
 from app.core.exceptions import EmailAIException
+from app.core.session_manager import session_manager
 from app.api.endpoints import email_endpoints, ai_endpoints, auth_endpoints
 from app.startup import clear_gmail_sessions
 
@@ -58,6 +59,56 @@ def create_application() -> FastAPI:
         allow_headers=["*"],
     )
     logger.info("✅ CORS middleware configured")
+    
+    # Add session management middleware
+    @app.middleware("http")
+    async def session_middleware(request: Request, call_next):
+        """Middleware to handle session management."""
+        # Get tab ID from header (sent by frontend)
+        tab_id = request.headers.get("X-Tab-ID")
+        
+        # Special handling for OAuth callback - use state parameter to find session
+        if request.url.path == "/auth/gmail/callback":
+            state = request.query_params.get("state")
+            if state and state != "no_session" and session_manager.is_valid_session(state):
+                session_id = state
+                logger.info(f"🔗 OAuth callback using session from state: {session_id}")
+            else:
+                # Fallback for callback without valid state
+                session_id = session_manager.create_session()
+                logger.warning(f"⚠️ OAuth callback with invalid state, created new session: {session_id}")
+        elif tab_id:
+            # Regular tab-specific session handling
+            session_id = tab_id
+            if not session_manager.is_valid_session(session_id):
+                session_manager.create_session_with_id(session_id)
+                logger.info(f"🆕 Created new tab session: {session_id}")
+            else:
+                logger.debug(f"🔄 Using existing tab session: {session_id}")
+        else:
+            # Fallback: use cookie-based session
+            session_id = request.cookies.get("session_id")
+            if not session_id or not session_manager.is_valid_session(session_id):
+                session_id = session_manager.create_session()
+                logger.info(f"🆕 Created new cookie session: {session_id}")
+            else:
+                logger.debug(f"🔄 Using existing cookie session: {session_id}")
+        
+        request.state.session_id = session_id
+        response = await call_next(request)
+        
+        # Set session cookie for non-tab-based requests
+        if not tab_id and request.url.path != "/auth/gmail/callback":
+            response.set_cookie(
+                key="session_id",
+                value=session_id,
+                httponly=False,  # Allow JavaScript access
+                secure=False,  # Set to True in production with HTTPS
+                samesite="lax",
+                max_age=None  # Session cookie - expires when browser closes
+            )
+        
+        return response
     
     # Register API routers
     logger.info("🔌 Registering API routers...")

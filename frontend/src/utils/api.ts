@@ -20,6 +20,7 @@ const api = axios.create({
   headers: {
     'Content-Type': 'application/json',
   },
+  withCredentials: true, // Include cookies for session management
 });
 
 // Enhanced logging utility
@@ -44,11 +45,47 @@ const logAPI = {
   }
 };
 
-// Request interceptor for enhanced logging
+// Generate unique tab ID for this browser tab instance (persistent across page reloads)
+const getTabId = (() => {
+  let tabId: string | null = null;
+  return () => {
+    if (!tabId) {
+      // Check if we're in browser environment
+      if (typeof window !== 'undefined') {
+        // First check if session ID is in URL params (from OAuth redirect)
+        const urlParams = new URLSearchParams(window.location.search);
+        const sessionFromUrl = urlParams.get('session_id');
+        
+        if (sessionFromUrl) {
+          // Use session ID from OAuth redirect and store it
+          tabId = sessionFromUrl;
+          sessionStorage.setItem('email_assist_tab_id', tabId);
+          return tabId;
+        }
+        
+        // Check if tab ID already exists in sessionStorage
+        tabId = sessionStorage.getItem('email_assist_tab_id');
+        if (!tabId) {
+          tabId = 'tab_' + Math.random().toString(36).substr(2, 16) + '_' + Date.now();
+          sessionStorage.setItem('email_assist_tab_id', tabId);
+        }
+      } else {
+        // Fallback for SSR
+        tabId = 'tab_ssr_' + Math.random().toString(36).substr(2, 8);
+      }
+    }
+    return tabId;
+  };
+})();
+
+// Request interceptor for enhanced logging and tab ID injection
 api.interceptors.request.use(
   (config) => {
     const startTime = Date.now();
     (config as any).metadata = { startTime };
+    
+    // Add tab ID header for session management
+    config.headers.set('X-Tab-ID', getTabId());
     
     logAPI.info(`📤 Request: ${config.method?.toUpperCase()} ${config.url}`);
     logAPI.debug('Request config:', {

@@ -3,7 +3,7 @@ Email-related API endpoints.
 Follows Single Responsibility Principle - handles only email API operations.
 """
 from typing import List
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, Request
 from fastapi.responses import JSONResponse
 
 from app.models.email_models import (
@@ -20,23 +20,26 @@ from app.core.exceptions import (
 router = APIRouter(tags=["emails"])
 
 
-def get_email_service() -> EmailService:
-    """Dependency injection for email service."""
-    return EmailService()
+def get_email_service(request: Request) -> EmailService:
+    """Dependency injection for email service with session support."""
+    session_id = getattr(request.state, 'session_id', None)
+    return EmailService(session_id=session_id)
 
 
-def get_gmail_service() -> GmailService:
-    """Dependency injection for Gmail service."""
-    return GmailService()
+def get_gmail_service(request: Request) -> GmailService:
+    """Dependency injection for Gmail service with session support."""
+    session_id = getattr(request.state, 'session_id', None)
+    return GmailService(session_id=session_id)
 
 
-def get_ai_service(gmail_service: GmailService = Depends(get_gmail_service)) -> AIService:
+def get_ai_service(request: Request, gmail_service: GmailService = Depends(get_gmail_service)) -> AIService:
     """Dependency injection for AI service with Gmail service dependency."""
     return AIService(gmail_service)
 
 
 @router.get("/domains", response_model=List[EmailDomain])
 async def get_email_domains(
+    request: Request,
     email_service: EmailService = Depends(get_email_service)
 ) -> List[EmailDomain]:
     """
@@ -56,6 +59,7 @@ async def get_email_domains(
 
 @router.get("/domains/{domain}/emails", response_model=List[EmailContent])
 async def get_emails_by_domain(
+    request: Request,
     domain: str,
     limit: int = 20,
     email_service: EmailService = Depends(get_email_service)
@@ -84,6 +88,7 @@ async def get_emails_by_domain(
 
 @router.post("/summarize", response_model=EmailSummary)
 async def summarize_email(
+    request: Request,
     email: EmailContent,
     ai_service: AIService = Depends(get_ai_service)
 ) -> EmailSummary:
@@ -107,7 +112,8 @@ async def summarize_email(
 
 @router.post("/generate-response", response_model=ResponseGeneration)
 async def generate_email_response(
-    request: ResponseRequest,
+    request: Request,
+    response_request: ResponseRequest,
     ai_service: AIService = Depends(get_ai_service)
 ) -> ResponseGeneration:
     """
@@ -120,7 +126,7 @@ async def generate_email_response(
         Generated email response with confidence score
     """
     try:
-        response = await ai_service.generate_response(request)
+        response = await ai_service.generate_response(response_request)
         return response
     except AIServiceException as e:
         raise HTTPException(status_code=500, detail=f"Response generation failed: {str(e)}")
@@ -130,7 +136,8 @@ async def generate_email_response(
 
 @router.post("/send-reply")
 async def send_email_reply(
-    request: dict,
+    request: Request,
+    reply_request: dict,
     email_service: EmailService = Depends(get_email_service)
 ) -> dict:
     """
@@ -143,8 +150,8 @@ async def send_email_reply(
         Success confirmation
     """
     try:
-        original_email = EmailContent(**request.get('original_email'))
-        reply_body = request.get('reply_body', '')
+        original_email = EmailContent(**reply_request.get('original_email'))
+        reply_body = reply_request.get('reply_body', '')
         
         if not reply_body.strip():
             raise HTTPException(status_code=400, detail="Reply body cannot be empty")
@@ -164,6 +171,7 @@ async def send_email_reply(
 
 @router.get("/message/{message_id}", response_model=EmailContent)
 async def get_full_email(
+    request: Request,
     message_id: str,
     email_service: EmailService = Depends(get_email_service)
 ) -> EmailContent:

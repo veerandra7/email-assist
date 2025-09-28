@@ -40,7 +40,7 @@ class Settings(BaseSettings):
     gmail_max_emails_per_request: int = 30  # reduced for better performance
     
     # CORS Settings
-    allowed_origins: str = "http://localhost:3000,http://127.0.0.1:3000,http://frontend:3000"
+    allowed_origins: str = "http://localhost:3000,http://127.0.0.1:3000,http://localhost:3030,http://127.0.0.1:3030,http://frontend:3000"
     
     @property
     def cors_origins(self) -> list:

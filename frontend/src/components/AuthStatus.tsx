@@ -5,6 +5,8 @@ import React, { useState, useEffect } from 'react';
 import Button from './ui/Button';
 import Card from './ui/Card';
 import LoadingSpinner from './ui/LoadingSpinner';
+import { authAPI } from '../utils/auth';
+import { handleAPIError } from '../utils/api';
 
 interface AuthStatusProps {
   onAuthChange: (authenticated: boolean) => void;
@@ -22,6 +24,33 @@ const AuthStatus: React.FC<AuthStatusProps> = ({ onAuthChange }) => {
   const [loading, setLoading] = useState(true);
   const [authLoading, setAuthLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [tabId] = useState(() => {
+    // Check if we're in browser environment
+    if (typeof window !== 'undefined') {
+      // First check if session ID is in URL params (from OAuth redirect)
+      const urlParams = new URLSearchParams(window.location.search);
+      const sessionFromUrl = urlParams.get('session_id');
+      
+      if (sessionFromUrl) {
+        // Use session ID from OAuth redirect and store it
+        sessionStorage.setItem('email_assist_tab_id', sessionFromUrl);
+        // Clean URL after capturing session ID
+        window.history.replaceState({}, document.title, window.location.pathname);
+        return sessionFromUrl;
+      }
+      
+      // Check if tab ID already exists in sessionStorage
+      let existingTabId = sessionStorage.getItem('email_assist_tab_id');
+      if (!existingTabId) {
+        // Generate new unique tab ID for this browser tab
+        existingTabId = 'tab_' + Math.random().toString(36).substr(2, 16) + '_' + Date.now();
+        sessionStorage.setItem('email_assist_tab_id', existingTabId);
+      }
+      return existingTabId;
+    }
+    // Fallback for SSR - will be replaced once component mounts in browser
+    return 'tab_ssr_' + Math.random().toString(36).substr(2, 8);
+  });
 
   useEffect(() => {
     checkAuthStatus();
@@ -43,8 +72,8 @@ const AuthStatus: React.FC<AuthStatusProps> = ({ onAuthChange }) => {
   const checkAuthStatus = async () => {
     try {
       setLoading(true);
-      const response = await fetch('http://localhost:8000/auth/gmail/status');
-      const data = await response.json();
+      // Use authAPI which ensures X-Tab-ID header is sent via axios interceptors
+      const data = await authAPI.getStatus();
       
       setAuthenticated(data.authenticated);
       setUserProfile(data.user_profile || null);
@@ -54,7 +83,7 @@ const AuthStatus: React.FC<AuthStatusProps> = ({ onAuthChange }) => {
         setError(data.error);
       }
     } catch (err) {
-      setError('Failed to check authentication status');
+      setError(handleAPIError(err));
       setAuthenticated(false);
       onAuthChange(false);
     } finally {
@@ -67,8 +96,8 @@ const AuthStatus: React.FC<AuthStatusProps> = ({ onAuthChange }) => {
       setAuthLoading(true);
       setError(null);
       
-      const response = await fetch('http://localhost:8000/auth/gmail/url');
-      const data = await response.json();
+      // Use authAPI which ensures X-Tab-ID header is sent via axios interceptors
+      const data = await authAPI.getAuthUrl();
       
       if (data.auth_url) {
         // Redirect to Gmail OAuth
@@ -77,7 +106,7 @@ const AuthStatus: React.FC<AuthStatusProps> = ({ onAuthChange }) => {
         setError('Failed to get authentication URL');
       }
     } catch (err) {
-      setError('Failed to initiate authentication');
+      setError(handleAPIError(err));
     } finally {
       setAuthLoading(false);
     }
@@ -86,15 +115,19 @@ const AuthStatus: React.FC<AuthStatusProps> = ({ onAuthChange }) => {
   const logout = async () => {
     try {
       setLoading(true);
-      await fetch('http://localhost:8000/auth/gmail/logout', {
-        method: 'POST'
-      });
+      // Use authAPI which ensures X-Tab-ID header is sent via axios interceptors
+      await authAPI.logout();
       
       setAuthenticated(false);
       setUserProfile(null);
       onAuthChange(false);
+      
+      // Clear the tab ID so a fresh session is created on next use
+      if (typeof window !== 'undefined') {
+        sessionStorage.removeItem('email_assist_tab_id');
+      }
     } catch (err) {
-      setError('Failed to logout');
+      setError(handleAPIError(err));
     } finally {
       setLoading(false);
     }

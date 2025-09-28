@@ -29,10 +29,17 @@ class GmailService:
     Gmail service for OAuth2 authentication and email operations.
     """
     
-    def __init__(self):
+    def __init__(self, session_id: Optional[str] = None):
         """Initialize Gmail service."""
-        self.credentials_file = "gmail_credentials.json"
-        self.token_file = "gmail_token.json"
+        self.session_id = session_id
+        if session_id:
+            self.credentials_file = f"gmail_credentials_{session_id}.json"
+            self.token_file = f"gmail_token_{session_id}.json"
+        else:
+            # Fallback to global files for backward compatibility
+            self.credentials_file = "gmail_credentials.json"
+            self.token_file = "gmail_token.json"
+        
         self.service = None
         self.settings = get_settings()
         
@@ -98,11 +105,15 @@ class GmailService:
             redirect_uri=self.settings.gmail_redirect_uri
         )
         
+        # Include session ID in state parameter to link callback to correct session
+        state_data = self.session_id if self.session_id else "no_session"
+        
         auth_url, _ = flow.authorization_url(
             access_type='offline',
             include_granted_scopes='true',
             prompt='consent',  # Force consent screen to get refresh token
-            login_hint=None
+            login_hint=None,
+            state=state_data  # Pass session ID in state parameter
         )
         
         return auth_url
