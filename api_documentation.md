@@ -302,7 +302,7 @@ GET /api/ai/provider
 ```json
 {
   "provider": "Claude",
-  "model": "claude-3-haiku-20240307",
+  "model": "claude-sonnet-4-20250514",
   "status": "active",
   "version": "3.0",
   "capabilities": [

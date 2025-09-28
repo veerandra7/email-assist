@@ -219,7 +219,7 @@ class ClaudeProvider:
             logger.debug(f"🤖 Generated prompt for summarization (version: {prompt_version}, length: {len(prompt)} chars)")
             
             max_tokens = self.prompt_manager.get_config('max_tokens_summarization', 500)
-            model = self.prompt_manager.get_config('model', 'claude-3-haiku-20240307')
+            model = self.prompt_manager.get_config('model', 'claude-sonnet-4-20250514')
             
             logger.info("🔄 Sending request to Claude API for summarization...")
             response = self.client.messages.create(
@@ -258,7 +258,7 @@ class ClaudeProvider:
             logger.debug(f"🤖 Generated prompt for response (version: {prompt_version}, length: {len(prompt)} chars)")
             
             max_tokens = self.prompt_manager.get_config('max_tokens_response', 300)
-            model = self.prompt_manager.get_config('model', 'claude-3-haiku-20240307')
+            model = self.prompt_manager.get_config('model', 'claude-sonnet-4-20250514')
             
             logger.info("🔄 Sending request to Claude API for response generation...")
             response = self.client.messages.create(
@@ -291,13 +291,17 @@ class ClaudeProvider:
     
     def _get_response_prompt_name(self, tone: str) -> str:
         """Get the appropriate prompt name based on tone."""
-        if tone and tone.lower() == 'formal':
-            return 'response_generation_formal'
-        elif tone and tone.lower() == 'friendly':
-            return 'response_generation_friendly'
-        else:
-            return 'response_generation'
-    
+        if tone:
+            tone_lower = tone.lower()
+            if tone_lower == "formal":
+                return "response_generation_formal"
+            elif tone_lower == "friendly":
+                return "response_generation_friendly"
+            elif tone_lower == "urgent":
+                return "response_generation_urgent"
+            elif tone_lower == "apologetic":
+                return "response_generation_apologetic"
+        return "response_generation"    
     def _create_summary_prompt(self, email: EmailContent) -> str:
         """Create prompt for email summarization using YAML template."""
         logger.debug("📝 Creating summarization prompt from YAML template...")

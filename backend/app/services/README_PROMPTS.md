@@ -60,7 +60,7 @@ Each prompt now includes:
 ### Configuration
 - `max_tokens_summarization`: 500
 - `max_tokens_response`: 300
-- `model`: "claude-3-haiku-20240307"
+- `model`: "claude-sonnet-4-20250514"
 
 ## Usage Example
 
