@@ -60,6 +60,8 @@ frontend_tunnel.log
 
 # Google OAuth credentials and user data
 client_secret_*.json
+gmail_credentials.json
+gmail_token.json
 user_credentials/
 user_sessions/
 
