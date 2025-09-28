@@ -1,0 +1,17 @@
+# Claude AI API Key
+CLAUDE_API_KEY=your_claude_api_key_here
+
+# Gmail OAuth2 Configuration  
+GMAIL_CLIENT_ID=your_gmail_client_id_here
+GMAIL_CLIENT_SECRET=your_gmail_client_secret_here
+
+# Application Settings
+DEBUG=True
+HOST=0.0.0.0
+PORT=8000
+
+
+
+# AI Service Configuration
+MAX_EMAIL_LENGTH=10000
+MAX_RESPONSE_LENGTH=2000 
