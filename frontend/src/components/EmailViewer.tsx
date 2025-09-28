@@ -82,33 +82,18 @@ const EmailViewer: React.FC<EmailViewerProps> = ({ email }) => {
       setSendingReply(true);
       setError(null);
       
-      const response = await fetch('http://localhost:8000/api/emails/send-reply', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          original_email: email,
-          reply_body: replyBody
-        }),
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.detail || 'Failed to send reply');
-      }
-
+      const result = await emailAPI.sendReply(email, replyBody);
+      
       setReplySuccess(true);
       // Clear the response after successful send
       setTimeout(() => setReplySuccess(false), 5000);
       
     } catch (err: any) {
-      setError(err.message || 'Failed to send reply');
+      setError(err.message || "Failed to send reply");
     } finally {
       setSendingReply(false);
     }
   };
-
   return (
     <div className="space-y-6">
       {/* Email Header */}

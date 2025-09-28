@@ -281,12 +281,43 @@ export const emailAPI = {
       logAPI.success(`Email service health: ${response.data.status}`);
       return response.data;
     } catch (error) {
-      logAPI.error('Email service health check failed');
+      logAPI.error("Email service health check failed");
+      throw error;
+    }
+  },  /**
+   * Send email reply
+   */
+  sendReply: async (originalEmail: EmailContent, replyBody: string): Promise<{message: string}> => {
+    logAPI.info(`📤 Sending reply for email: "${originalEmail.subject}"`);
+    logAPI.debug("Send reply request:", {
+      original_subject: originalEmail.subject,
+      original_sender: originalEmail.sender,
+      reply_length: replyBody.length
+    });
+    
+    try {
+      const startTime = Date.now();
+      const response: AxiosResponse<{message: string}> = await api.post(
+        "/api/emails/send-reply",
+        {
+          original_email: originalEmail,
+          reply_body: replyBody
+        }
+      );
+      const duration = Date.now() - startTime;
+      
+      logAPI.success(`Reply sent successfully in ${duration}ms`);
+      logAPI.debug("Send reply response:", {
+        message: response.data.message
+      });
+      
+      return response.data;
+    } catch (error) {
+      logAPI.error(`Failed to send reply for email: "${originalEmail.subject}"`);
       throw error;
     }
   },
 };
-
 // AI API functions with enhanced logging
 export const aiAPI = {
   /**
