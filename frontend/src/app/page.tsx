@@ -5,6 +5,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { EmailContent } from '../types/email';
+import { emailAPI } from '../utils/api';
 import AuthStatus from '../components/AuthStatus';
 import DomainList from '../components/DomainList';
 import EmailList from '../components/EmailList';
@@ -25,6 +26,12 @@ const logComponent = {
   },
   state: (message: string, data?: any) => {
     console.log(`🔄 [HomePage] State Change: ${message}`, data ? data : '');
+  },
+  success: (message: string, data?: any) => {
+    console.log(`✅ [HomePage] Success: ${message}`, data ? data : '');
+  },
+  error: (message: string, data?: any) => {
+    console.error(`❌ [HomePage] Error: ${message}`, data ? data : '');
   }
 };
 
@@ -78,17 +85,33 @@ export default function HomePage() {
     logComponent.info(`Domain changed to: ${domain}, email selection cleared`);
   };
 
-  const handleEmailSelect = (email: EmailContent) => {
+  const handleEmailSelect = async (email: EmailContent) => {
     logComponent.user(`Selected email: "${email.subject}" from ${email.sender}`);
     logComponent.debug('Email selection details:', {
       subject: email.subject,
       sender: email.sender,
       domain: email.domain,
       receivedDate: email.received_date,
-      priority: email.priority
+      priority: email.priority,
+      messageId: email.message_id
     });
     
-    setSelectedEmail(email);
+    // If email body is empty and we have a message_id, load full content
+    if (!email.body && email.message_id) {
+      logComponent.info(`Loading full email content for: ${email.subject}`);
+      try {
+        const fullEmail = await emailAPI.getFullEmail(email.message_id);
+        logComponent.success(`Full email content loaded: ${fullEmail.subject}`);
+        setSelectedEmail(fullEmail);
+      } catch (error) {
+        logComponent.error(`Failed to load full email content: ${error}`);
+        // Still set the email even if we can't load full content
+        setSelectedEmail(email);
+      }
+    } else {
+      setSelectedEmail(email);
+    }
+    
     logComponent.info(`Email selected: ${email.subject}`);
   };
 

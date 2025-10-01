@@ -35,8 +35,12 @@ class Settings(BaseSettings):
     max_email_length: int = 10000
     max_response_length: int = 2000
     
+    # Gmail API Performance Settings
+    gmail_request_timeout: int = 30  # seconds
+    gmail_max_emails_per_request: int = 30  # reduced for better performance
+    
     # CORS Settings
-    allowed_origins: str = "http://localhost:3000,http://127.0.0.1:3000,http://frontend:3000"
+    allowed_origins: str = "http://localhost:3000,http://127.0.0.1:3000,http://localhost:3030,http://127.0.0.1:3030,http://frontend:3000"
     
     @property
     def cors_origins(self) -> list:
@@ -59,7 +63,3 @@ class Settings(BaseSettings):
 def get_settings() -> Settings:
     """Get application settings instance."""
     return Settings()
-
-
-# Global settings instance
-settings = get_settings() 

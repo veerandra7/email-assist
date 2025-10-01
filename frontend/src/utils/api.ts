@@ -20,6 +20,7 @@ const api = axios.create({
   headers: {
     'Content-Type': 'application/json',
   },
+  withCredentials: true, // Include cookies for session management
 });
 
 // Enhanced logging utility
@@ -44,11 +45,47 @@ const logAPI = {
   }
 };
 
-// Request interceptor for enhanced logging
+// Generate unique tab ID for this browser tab instance (persistent across page reloads)
+const getTabId = (() => {
+  let tabId: string | null = null;
+  return () => {
+    if (!tabId) {
+      // Check if we're in browser environment
+      if (typeof window !== 'undefined') {
+        // First check if session ID is in URL params (from OAuth redirect)
+        const urlParams = new URLSearchParams(window.location.search);
+        const sessionFromUrl = urlParams.get('session_id');
+        
+        if (sessionFromUrl) {
+          // Use session ID from OAuth redirect and store it
+          tabId = sessionFromUrl;
+          sessionStorage.setItem('email_assist_tab_id', tabId);
+          return tabId;
+        }
+        
+        // Check if tab ID already exists in sessionStorage
+        tabId = sessionStorage.getItem('email_assist_tab_id');
+        if (!tabId) {
+          tabId = 'tab_' + Math.random().toString(36).substr(2, 16) + '_' + Date.now();
+          sessionStorage.setItem('email_assist_tab_id', tabId);
+        }
+      } else {
+        // Fallback for SSR
+        tabId = 'tab_ssr_' + Math.random().toString(36).substr(2, 8);
+      }
+    }
+    return tabId;
+  };
+})();
+
+// Request interceptor for enhanced logging and tab ID injection
 api.interceptors.request.use(
   (config) => {
     const startTime = Date.now();
     (config as any).metadata = { startTime };
+    
+    // Add tab ID header for session management
+    config.headers.set('X-Tab-ID', getTabId());
     
     logAPI.info(`📤 Request: ${config.method?.toUpperCase()} ${config.url}`);
     logAPI.debug('Request config:', {
@@ -132,24 +169,47 @@ export const emailAPI = {
   },
 
   /**
-   * Get emails from a specific domain
+   * Get emails from a specific domain (subjects only for performance)
    */
   getEmailsByDomain: async (domain: string, limit = 20): Promise<EmailContent[]> => {
-    logAPI.info(`📬 Fetching emails from domain: ${domain} (limit: ${limit})`);
+    logAPI.info(`📬 Fetching email subjects from domain: ${domain} (limit: ${limit})`);
     try {
       const response: AxiosResponse<EmailContent[]> = await api.get(
         `/api/emails/domains/${encodeURIComponent(domain)}/emails`,
         { params: { limit } }
       );
-      logAPI.success(`Retrieved ${response.data.length} emails from domain ${domain}`);
-      logAPI.debug('Emails summary:', response.data.map(e => ({ 
+      logAPI.success(`Retrieved ${response.data.length} email subjects from domain ${domain}`);
+      logAPI.debug('Email subjects:', response.data.map(e => ({ 
         subject: e.subject.substring(0, 50) + '...', 
         sender: e.sender,
-        received_date: e.received_date 
+        received_date: e.received_date,
+        message_id: e.message_id 
       })));
       return response.data;
     } catch (error) {
       logAPI.error(`Failed to fetch emails from domain: ${domain}`);
+      throw error;
+    }
+  },
+
+  /**
+   * Get full email content by message ID
+   */
+  getFullEmail: async (messageId: string): Promise<EmailContent> => {
+    logAPI.info(`📧 Loading full email content for message: ${messageId}`);
+    try {
+      const response: AxiosResponse<EmailContent> = await api.get(
+        `/api/emails/message/${encodeURIComponent(messageId)}`
+      );
+      logAPI.success(`Retrieved full email content: ${response.data.subject}`);
+      logAPI.debug('Full email loaded:', {
+        subject: response.data.subject,
+        sender: response.data.sender,
+        bodyLength: response.data.body.length
+      });
+      return response.data;
+    } catch (error) {
+      logAPI.error(`Failed to load full email for message: ${messageId}`);
       throw error;
     }
   },
@@ -221,12 +281,43 @@ export const emailAPI = {
       logAPI.success(`Email service health: ${response.data.status}`);
       return response.data;
     } catch (error) {
-      logAPI.error('Email service health check failed');
+      logAPI.error("Email service health check failed");
+      throw error;
+    }
+  },  /**
+   * Send email reply
+   */
+  sendReply: async (originalEmail: EmailContent, replyBody: string): Promise<{message: string}> => {
+    logAPI.info(`📤 Sending reply for email: "${originalEmail.subject}"`);
+    logAPI.debug("Send reply request:", {
+      original_subject: originalEmail.subject,
+      original_sender: originalEmail.sender,
+      reply_length: replyBody.length
+    });
+    
+    try {
+      const startTime = Date.now();
+      const response: AxiosResponse<{message: string}> = await api.post(
+        "/api/emails/send-reply",
+        {
+          original_email: originalEmail,
+          reply_body: replyBody
+        }
+      );
+      const duration = Date.now() - startTime;
+      
+      logAPI.success(`Reply sent successfully in ${duration}ms`);
+      logAPI.debug("Send reply response:", {
+        message: response.data.message
+      });
+      
+      return response.data;
+    } catch (error) {
+      logAPI.error(`Failed to send reply for email: "${originalEmail.subject}"`);
       throw error;
     }
   },
 };
-
 // AI API functions with enhanced logging
 export const aiAPI = {
   /**

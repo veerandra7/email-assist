@@ -1,0 +1,221 @@
+# Email AI Service Prompts Configuration
+# Version: 1.2
+# Last Updated: 2024-09-28
+# 
+# This file contains all prompt templates used by the AI service.
+# Prompts are critical for AI performance - maintain them carefully.
+
+prompts:
+  # Email Summarization Prompts
+  summarization:
+    current_version: "1.2"
+    version: "1.2"
+    description: "Prompt for analyzing and summarizing incoming emails with mandatory tone suggestion"
+    template: |
+      Analyze this email and provide a structured summary:
+
+      Subject: {subject}
+      From: {sender}
+      Date: {received_date}
+      Content: {body}
+
+      Please provide a detailed analysis in this EXACT format:
+
+      1. Summary: [A concise 2-3 sentence summary]
+      2. Key points:
+      • [List key points in bullet format]
+      3. Action required: [Yes/No - be specific about what action is needed]
+      4. Urgency level: [low/medium/high/urgent - assess based on content, deadlines, and sender importance]
+      5. Suggested response tone: [MANDATORY - Return EXACTLY ONE WORD from: professional, friendly, urgent, formal, apologetic]
+
+      CRITICAL: For the suggested response tone, you MUST return only ONE WORD from the list above. Do not add any explanations or additional text. Just the single word that best matches the email context.
+
+      Format your response exactly as shown above with clear labels and structured information.
+  # Email Response Generation Prompts
+  response_generation:
+    current_version: "1.4"
+    version: "1.4"
+    description: "Professional email response generation with enhanced tone handling"
+    template: |
+      You are helping a user reply to an email using a {tone} tone. Your job is to write EXACTLY what the user wants to say with the specified tone.
+
+      === ORIGINAL EMAIL TO REPLY TO ===
+      Subject: {subject}
+      From: {sender}
+      
+      Email Content:
+      {body}
+
+      === USER'S MESSAGE TO REPLY WITH ===
+      "{user_input}"
+
+      === TONE SPECIFICATION ===
+      Write in a {tone} tone, which means:
+      - Professional: Business-appropriate, clear, and respectful
+      - Friendly: Warm yet professional, conversational but appropriate
+      - Urgent: Direct, time-sensitive, emphasizing importance
+      - Formal: Very professional, structured, ceremonial language
+      - Apologetic: Express regret, take responsibility, offer solutions
+
+      === INSTRUCTIONS ===
+      1. Write a {tone} email response that conveys exactly what the user wants to say
+      2. Start with: Dear {original_sender_name},
+      3. End with: Sincerely,\n{reply_sender_name}
+      4. DO NOT include a subject line
+      5. Match the {tone} tone throughout the message
+      6. Ensure the main content directly conveys the user's message: "{user_input}"
+      7. Be natural and authentic to the specified tone
+      8. Maintain appropriate email etiquette
+
+      Generate the email response that directly addresses what the user wants to say in the {tone} tone.
+
+  # Formal Response Generation
+  response_generation_formal:
+    current_version: "1.4"
+    version: "1.4"
+    description: "Formal business email response generation"
+    template: |
+      You are helping a user write a formal business email reply. Write EXACTLY what they want to say using formal business language.
+
+      === ORIGINAL EMAIL TO REPLY TO ===
+      Subject: {subject}
+      From: {sender}
+      
+      Email Content:
+      {body}
+
+      === USER'S MESSAGE TO REPLY WITH ===
+      "{user_input}"
+
+      === INSTRUCTIONS ===
+      1. Write a formal business email that conveys exactly what the user wants to say
+      2. Start with: Dear {original_sender_name},
+      3. End with: Sincerely,\n{reply_sender_name}
+      4. DO NOT include a subject line
+      5. Use formal business language with proper structure
+      6. The core message should be the user's input: "{user_input}"
+      7. Maintain professional decorum and courtesy
+      8. Be concise yet comprehensive
+
+      Generate the formal email response that directly conveys the user's message.
+
+  # Friendly Response Generation
+  response_generation_friendly:
+    current_version: "1.4"
+    version: "1.4"
+    description: "Friendly email response generation"
+    template: |
+      You are helping a user write a friendly email reply. Write EXACTLY what they want to say using warm, conversational language.
+
+      === ORIGINAL EMAIL TO REPLY TO ===
+      Subject: {subject}
+      From: {sender}
+      
+      Email Content:
+      {body}
+
+      === USER'S MESSAGE TO REPLY WITH ===
+      "{user_input}"
+
+      === INSTRUCTIONS ===
+      1. Write a friendly email that conveys exactly what the user wants to say
+      2. Start with: Dear {original_sender_name},
+      3. End with: Sincerely,\n{reply_sender_name}
+      4. DO NOT include a subject line
+      5. Use warm, conversational language while staying professional
+      6. The core message should be the user's input: "{user_input}"
+      7. Be authentic and personable
+      8. Show genuine interest and care
+
+      Generate the friendly email response that directly conveys the user's message.
+
+  # Urgent Response Generation
+  response_generation_urgent:
+    current_version: "1.4"
+    version: "1.4"
+    description: "Urgent email response generation"
+    template: |
+      You are helping a user write an urgent email reply. Write EXACTLY what they want to say with urgency and importance.
+
+      === ORIGINAL EMAIL TO REPLY TO ===
+      Subject: {subject}
+      From: {sender}
+      
+      Email Content:
+      {body}
+
+      === USER'S MESSAGE TO REPLY WITH ===
+      "{user_input}"
+
+      === INSTRUCTIONS ===
+      1. Write an urgent email that conveys exactly what the user wants to say
+      2. Start with: Dear {original_sender_name},
+      3. End with: Sincerely,\n{reply_sender_name}
+      4. DO NOT include a subject line
+      5. Use direct, time-sensitive language that emphasizes importance
+      6. The core message should be the user's input: "{user_input}"
+      7. Convey urgency without being rude or aggressive
+      8. Include clear next steps or deadlines if applicable
+
+      Generate the urgent email response that directly conveys the user's message.
+
+  # Apologetic Response Generation
+  response_generation_apologetic:
+    current_version: "1.4"
+    version: "1.4"
+    description: "Apologetic email response generation"
+    template: |
+      You are helping a user write an apologetic email reply. Write EXACTLY what they want to say with appropriate regret and responsibility.
+
+      === ORIGINAL EMAIL TO REPLY TO ===
+      Subject: {subject}
+      From: {sender}
+      
+      Email Content:
+      {body}
+
+      === USER'S MESSAGE TO REPLY WITH ===
+      "{user_input}"
+
+      === INSTRUCTIONS ===
+      1. Write an apologetic email that conveys exactly what the user wants to say
+      2. Start with: Dear {original_sender_name},
+      3. End with: Sincerely,\n{reply_sender_name}
+      4. DO NOT include a subject line
+      5. Express genuine regret and take appropriate responsibility
+      6. The core message should be the user's input: "{user_input}"
+      7. Offer solutions or corrective actions where appropriate
+      8. Maintain professionalism while showing accountability
+
+      Generate the apologetic email response that directly conveys the user's message.
+
+# Prompt Configuration
+config:
+  max_tokens_summarization: 500
+  max_tokens_response: 400
+  model: "claude-sonnet-4-20250514"
+  
+# Version History
+version_history:
+  - version: "1.2"
+    date: "2024-09-28"
+    changes:
+      - "Made tone suggestion mandatory in summarization"
+      - "Enhanced tone-based response generation"
+      - "Added urgent and apologetic tone templates"
+      - "Improved tone specification instructions"
+      - "Updated prompt versioning to 1.4 for response generation"
+  - version: "1.1"
+    date: "2024-01-XX"
+    changes:
+      - "Fixed email signature format"
+      - "Added original_sender_name and reply_sender_name parameters"
+      - "Corrected Dear/Sincerely format"
+  - version: "1.0"
+    date: "2024-01-XX"
+    changes:
+      - "Initial prompt templates"
+      - "Added signature support"
+      - "Removed subject line from responses"
+      - "Structured prompt management"
+      - "Added current_version field for version tracking"

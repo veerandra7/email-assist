@@ -36,13 +36,16 @@ const EmailViewer: React.FC<EmailViewerProps> = ({ email }) => {
       setError(null);
       const summaryData = await emailAPI.summarizeEmail(email);
       setSummary(summaryData);
+      // Automatically set the suggested tone from the summary
+      if (summaryData.suggested_response_tone) {
+        setTone(summaryData.suggested_response_tone.toLowerCase());
+      }
     } catch (err) {
       setError(handleAPIError(err));
     } finally {
       setLoadingSummary(false);
     }
   };
-
   const handleGenerateResponse = async () => {
     if (!userInput.trim()) {
       setError('Please enter your response instructions');
@@ -79,33 +82,18 @@ const EmailViewer: React.FC<EmailViewerProps> = ({ email }) => {
       setSendingReply(true);
       setError(null);
       
-      const response = await fetch('http://localhost:8000/api/emails/send-reply', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          original_email: email,
-          reply_body: replyBody
-        }),
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.detail || 'Failed to send reply');
-      }
-
+      const result = await emailAPI.sendReply(email, replyBody);
+      
       setReplySuccess(true);
       // Clear the response after successful send
       setTimeout(() => setReplySuccess(false), 5000);
       
     } catch (err: any) {
-      setError(err.message || 'Failed to send reply');
+      setError(err.message || "Failed to send reply");
     } finally {
       setSendingReply(false);
     }
   };
-
   return (
     <div className="space-y-6">
       {/* Email Header */}
@@ -194,9 +182,17 @@ const EmailViewer: React.FC<EmailViewerProps> = ({ email }) => {
               </div>
               <div>
                 <span className="font-medium text-gray-700">Suggested Tone:</span>
-                <p className="font-medium text-gray-900">{summary.suggested_response_tone}</p>
-              </div>
-            </div>
+                <button
+                  onClick={() => setTone(summary.suggested_response_tone.toLowerCase())}
+                  className="ml-2 font-medium text-blue-600 hover:text-blue-800 underline capitalize"
+                  title="Click to use this tone"
+                >
+                  {summary.suggested_response_tone}
+                  {tone === summary.suggested_response_tone.toLowerCase() && (
+                    <span className="ml-1 text-green-600">✓</span>
+                  )}
+                </button>
+              </div>            </div>
           </div>
         )}
       </Card>
@@ -222,6 +218,12 @@ const EmailViewer: React.FC<EmailViewerProps> = ({ email }) => {
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">
               Tone
+              {summary && summary.suggested_response_tone && 
+                tone === summary.suggested_response_tone.toLowerCase() && (
+                <span className="ml-2 text-xs text-blue-600 bg-blue-50 px-2 py-1 rounded-full">
+                  🤖 AI Suggested
+                </span>
+              )}
             </label>
             <select
               value={tone}
@@ -235,7 +237,6 @@ const EmailViewer: React.FC<EmailViewerProps> = ({ email }) => {
               <option value="apologetic">Apologetic</option>
             </select>
           </div>
-
           <Button 
             onClick={handleGenerateResponse}
             loading={loadingResponse}

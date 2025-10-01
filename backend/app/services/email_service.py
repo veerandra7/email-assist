@@ -4,7 +4,7 @@ Follows Single Responsibility Principle - handles only email operations.
 """
 import logging
 from datetime import datetime, timedelta
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 import re
 from email.utils import parseaddr
 
@@ -26,11 +26,11 @@ class EmailService:
     Follows Interface Segregation Principle - focused interface.
     """
     
-    def __init__(self):
+    def __init__(self, session_id: Optional[str] = None):
         """Initialize email service with Gmail integration."""
         logger.info("📧 Initializing Email Service...")
         try:
-            self.gmail_service = GmailService()
+            self.gmail_service = GmailService(session_id=session_id)
             logger.info("✅ Email Service initialized successfully with Gmail integration")
         except Exception as e:
             logger.error(f"❌ Failed to initialize Email Service: {str(e)}")
@@ -201,6 +201,33 @@ class EmailService:
         except Exception as e:
             logger.error(f"❌ Failed to get email domains: {str(e)}")
             raise EmailProcessingException(f"Failed to get email domains: {str(e)}")
+    
+    def get_email_by_id(self, message_id: str) -> EmailContent:
+        """
+        Get full email content by message ID.
+        
+        Args:
+            message_id: Gmail message ID
+            
+        Returns:
+            Full email content with body
+        """
+        logger.info(f"📧 Retrieving full email content for message ID: {message_id}")
+        
+        try:
+            if not self.gmail_service.is_authenticated():
+                logger.error("❌ Gmail authentication required for email retrieval")
+                raise EmailProcessingException("Gmail authentication required. Please authenticate first.")
+            
+            logger.debug("✅ Gmail authentication verified")
+            email = self.gmail_service.get_email_by_id(message_id)
+            
+            logger.info(f"✅ Retrieved full email content for: {email.subject}")
+            return email
+            
+        except Exception as e:
+            logger.error(f"❌ Failed to get email {message_id}: {str(e)}")
+            raise EmailProcessingException(f"Failed to get email {message_id}: {str(e)}")
     
     def send_reply(self, original_email: EmailContent, reply_body: str) -> bool:
         """

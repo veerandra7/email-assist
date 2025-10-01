@@ -39,6 +39,7 @@ class EmailContent(BaseModel):
     received_date: datetime
     priority: EmailPriority = EmailPriority.MEDIUM
     domain: str
+    message_id: Optional[str] = None  # Gmail message ID for on-demand loading
     
     @validator('body')
     def validate_body_length(cls, v):

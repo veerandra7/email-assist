@@ -12,13 +12,15 @@ from app.core.exceptions import AIServiceException, APIKeyMissingException
 # Configure logger
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/ai", tags=["ai"])
+router = APIRouter(tags=["ai"])
 
 
 def get_ai_service() -> AIService:
     """Dependency injection for AI service."""
     logger.debug("🔧 Creating AI service instance for dependency injection")
     try:
+        # Note: AI endpoints don't need Gmail service dependency for basic operations
+        # Gmail service dependency is handled in email endpoints where it's needed
         service = AIService()
         logger.debug("✅ AI service instance created successfully")
         return service
