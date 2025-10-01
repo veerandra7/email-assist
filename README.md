@@ -6,10 +6,7 @@ A modern, AI-powered email management and response system built with React (Next
 
 Watch a quick demonstration of the Email AI Assistant in action:
 
-<video controls width="100%">
-  <source src="Demo.mp4" type="video/mp4">
-  Your browser does not support the video tag.
-</video>
+[![Demo Video](Demo.mp4)](Demo.mp4)
 
 *Note: Download or view the [Demo.mp4](Demo.mp4) file to see the application in action.*
 
