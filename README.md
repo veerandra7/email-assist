@@ -2,6 +2,37 @@
 
 A modern, AI-powered email management and response system built with React (Next.js) frontend and Python (FastAPI) backend, powered by Anthropic's Claude AI.
 
+## 🎬 Demo
+
+Watch a quick demonstration of the Email AI Assistant in action:
+
+<video controls width="100%">
+  <source src="Demo.mp4" type="video/mp4">
+  Your browser does not support the video tag.
+</video>
+
+*Note: Download or view the [Demo.mp4](Demo.mp4) file to see the application in action.*
+
+## 📋 Documentation Index
+
+| Document | Purpose | When to Use |
+|----------|---------|-------------|
+| **[how_to_run.md](how_to_run.md)** | Docker setup & commands | Quick local setup with Docker |
+| **[running_in_local.md](running_in_local.md)** | Manual development setup | Development without Docker |
+| **[deployment_with_docker.md](deployment_with_docker.md)** | Cloud deployment guide | Production deployment |
+| **[api_documentation.md](api_documentation.md)** | Complete API reference | API integration & testing |
+| **[product_description.md](product_description.md)** | Product features & capabilities | Understanding what the app does |
+
+## 🎯 Key Features
+
+- **🧠 AI Email Summarization**: Get concise summaries with key points and action items
+- **✍️ Intelligent Response Generation**: Create context-aware replies with customizable tone
+- **📊 Smart Domain Analysis**: Automatically rank email domains by importance
+- **🔒 Secure Gmail Integration**: OAuth2 authentication with Gmail API
+- **🎨 Modern UI**: Beautiful, responsive interface built with React and Tailwind CSS
+- **🐳 Docker Ready**: Fully containerized for easy deployment
+
+
 ## 🚀 Quick Start
 
 ### Prerequisites
@@ -27,25 +58,6 @@ docker-compose up --build
 # Backend API: http://localhost:8000
 # API Docs: http://localhost:8000/docs
 ```
-
-## 📋 Documentation Index
-
-| Document | Purpose | When to Use |
-|----------|---------|-------------|
-| **[how_to_run.md](how_to_run.md)** | Docker setup & commands | Quick local setup with Docker |
-| **[running_in_local.md](running_in_local.md)** | Manual development setup | Development without Docker |
-| **[deployment_with_docker.md](deployment_with_docker.md)** | Cloud deployment guide | Production deployment |
-| **[api_documentation.md](api_documentation.md)** | Complete API reference | API integration & testing |
-| **[product_description.md](product_description.md)** | Product features & capabilities | Understanding what the app does |
-
-## 🎯 Key Features
-
-- **🧠 AI Email Summarization**: Get concise summaries with key points and action items
-- **✍️ Intelligent Response Generation**: Create context-aware replies with customizable tone
-- **📊 Smart Domain Analysis**: Automatically rank email domains by importance
-- **🔒 Secure Gmail Integration**: OAuth2 authentication with Gmail API
-- **🎨 Modern UI**: Beautiful, responsive interface built with React and Tailwind CSS
-- **🐳 Docker Ready**: Fully containerized for easy deployment
 
 ## 🏗️ Architecture
 
